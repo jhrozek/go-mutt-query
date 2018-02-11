@@ -1,0 +1,6 @@
+uri: ldap.corp.redhat.com
+port: 389
+search_base: dc=redhat,dc=com
+search_attrs:
+    - uid
+    - cn

@@ -3,6 +3,7 @@ package main
 import "fmt"
 import "os"
 import "log"
+import "github.com/spf13/viper"
 import "gopkg.in/ldap.v2"
 
 // todo
@@ -10,25 +11,53 @@ import "gopkg.in/ldap.v2"
 //	-- mail attr
 //	-- search attrs
 //	   display attrs
-//  - objectify configuration?
+//  - CI
+//  - vendor packages
 
 type searchConfig struct {
-	SearchAttributes []string
-	LdapServer       string
-	SearchBase       string
+	LdapServer string `mapstructure:"uri"`
+	LdapPort   int    `mapstructure:"port"`
+	SearchBase string `mapstructure:"search_base"`
+
+	MatchAttributes []string `mapstructure:"search_attrs"`
+
+	DisplayAttributes []string `mapstructure:"display_attrs"`
 }
 
-func defaultConfig() *searchConfig {
-	return &searchConfig{
-		SearchAttributes: []string{"uid", "cn"},
-		LdapServer:       "ldap.corp.redhat.com",
-		SearchBase:       "dc=redhat,dc=com",
-	}
+func configFileSources() {
+	viper.SetConfigName("gmlq")        // name of config file (without extension)
+	viper.AddConfigPath("$HOME/.gmlq") // call multiple times to add many search paths
+	viper.AddConfigPath(".")           // optionally look for config in the working directory
+}
+
+func configDefaults() {
+	// set the defaults. Can be done for some attributes only
+	viper.SetDefault("MatchAttributes", []string{"uid", "cn"})
+	viper.SetDefault("DisplayAttributes", []string{"mail", "cn"})
+	viper.SetDefault("LdapPort", 389)
+}
+
+func configSetUp() {
+	configFileSources()
+	configDefaults()
 }
 
 func getConfig() (*searchConfig, error) {
+	configSetUp()
+
+	err := viper.ReadInConfig() // Find and read the config file
+	if err != nil {             // Handle errors reading the config file
+		return nil, fmt.Errorf("Fatal error opening the config file: %s \n", err)
+	}
+
+	var sc searchConfig
+
+	err = viper.Unmarshal(&sc)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
+	}
 	// todo: read from a config file
-	return defaultConfig(), nil
+	return &sc, nil
 }
 
 type searchResult struct {
@@ -40,12 +69,12 @@ type searchResult struct {
 func searchLdap(conf *searchConfig, term string) ([]searchResult, error) {
 	// combine filter
 	filter := "(&(|"
-	for _, attr := range conf.SearchAttributes {
+	for _, attr := range conf.MatchAttributes {
 		filter = fmt.Sprintf("%s(%s=*%s*)", filter, attr, term)
 	}
 	filter = fmt.Sprintf("%s)(mail=*))", filter)
 
-	l, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", conf.LdapServer, 389))
+	l, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", conf.LdapServer, conf.LdapPort))
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +85,7 @@ func searchLdap(conf *searchConfig, term string) ([]searchResult, error) {
 		conf.SearchBase,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		filter,
-		[]string{"mail", "cn", "rhatJobTitle"},
+		conf.DisplayAttributes,
 		nil,
 	)
 
@@ -67,6 +96,7 @@ func searchLdap(conf *searchConfig, term string) ([]searchResult, error) {
 
 	res := make([]searchResult, len(sr.Entries))
 	for idx, entry := range sr.Entries {
+		// build a dict based on what the user configured to be in display attrs
 		res[idx].Mail = entry.GetAttributeValue("mail")
 		res[idx].Name = entry.GetAttributeValue("cn")
 		res[idx].Title = entry.GetAttributeValue("rhatJobTitle")
