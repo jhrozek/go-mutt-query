@@ -1,1 +1,16 @@
 language: go
+
+sudo: required
+
+services:
+    - docker
+
+before_install:
+    - sudo apt-get -qq update
+    - sudo apt-get install -y ldap-utils
+    - docker pull dinkel/openldap
+    - docker run -d -p 389:389 -e SLAPD_PASSWORD=Secret123 -e SLAPD_DOMAIN=example.com dinkel/openldap
+    - docker ps -a
+
+script:
+    - ldapsearch -x -H ldap://127.0.0.1 -b dc=example,dc=com -D'cn=admin,dc=example,dc=com' -wSecret123
